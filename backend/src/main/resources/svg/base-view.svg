@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300">
+  <rect x="5" y="5" width="390" height="290" fill="#fff" stroke="#000"/>
+  <!--OVERLAYS-->
+  <style>.label{font-family:monospace;font-size:12px;fill:#000}</style>
+</svg>

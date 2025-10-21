@@ -1,0 +1,29 @@
+package rules
+
+import com.example.plm.domain.Feature;
+import com.example.plm.domain.Part;
+import com.example.plm.domain.Annotation;
+
+// Create dimension annotations for rectangular faces
+rule "Face dims"
+when
+  $f : Feature(type == "FACE", d1 > 0, d2 > 0)
+  $p : Part(this == $f.part)
+then
+  Annotation w = new Annotation();
+  w.setPart($p);
+  w.setLabel("WIDTH");
+  w.setValue(String.format("%.1f", $f.getD1()));
+  w.setX($f.getX());
+  w.setY($f.getY());
+
+  Annotation h = new Annotation();
+  h.setPart($p);
+  h.setLabel("HEIGHT");
+  h.setValue(String.format("%.1f", $f.getD2()));
+  h.setX($f.getX());
+  h.setY($f.getY()+10);
+
+  insert(w);
+  insert(h);
+end
