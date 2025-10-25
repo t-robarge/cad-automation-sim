@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Parts Admin</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Arial; }
+    body { margin: 24px; background: #0f1220; color: #e9ecf1; }
+    h1 { margin: 0 0 12px; font-size: 20px; }
+    .grid { display: grid; grid-template-columns: 1fr 2fr; gap: 16px; }
+    .card { background: #171a2b; border: 1px solid #262a42; border-radius: 10px; padding: 14px; }
+    .row { display: flex; gap: 8px; align-items: center; margin: 6px 0; }
+    input, select { background: #0f1220; color: #e9ecf1; border: 1px solid #2a2e4a; border-radius: 8px; padding: 8px; }
+    button { background: #4452ff; color: white; border: 0; border-radius: 8px; padding: 8px 12px; cursor: pointer; }
+    button.ghost { background: #2a2e4a; }
+    button.danger { background: #d9534f; }
+    table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+    th, td { padding: 8px; border-bottom: 1px solid #2a2e4a; text-align: left; font-size: 14px; }
+    .muted { color: #a7afc4; }
+    .spacer { flex: 1; }
+    #toast { position: fixed; bottom: 16px; right: 16px; background: #222845; color: #fff; padding: 10px 12px; border-radius: 8px; display: none; }
+    .small { font-size: 12px; }
+    a { color: #9cc2ff; text-decoration: none; }
+  </style>
+</head>
+<body>
+  <h1>Parts Admin</h1>
+  <div class="grid">
+    <!-- Left: Parts -->
+    <div class="card">
+      <div class="row">
+        <strong>Parts</strong>
+        <span class="spacer"></span>
+        <button id="refreshParts" class="ghost">Refresh</button>
+      </div>
+
+      <!-- Create Part -->
+      <div class="row">
+        <input id="pn" placeholder="partNumber (e.g., DEMO-PLATE)" />
+      </div>
+      <div class="row">
+        <input id="pname" placeholder="name" />
+        <input id="punit" placeholder="unit (e.g., MM)" style="width:120px" />
+        <button id="createPart">Create</button>
+      </div>
+
+      <table>
+        <thead><tr><th>Part #</th><th>Name</th><th>Unit</th><th>Features</th><th></th></tr></thead>
+        <tbody id="partsBody"><tr><td colspan="5" class="muted">Loading…</td></tr></tbody>
+      </table>
+      <div class="small muted">Tip: click a part to view & manage its features.</div>
+    </div>
+
+    <!-- Right: Part details -->
+    <div class="card">
+      <div class="row">
+        <strong id="detailTitle">Select a part</strong>
+        <span class="spacer"></span>
+        <button id="deletePart" class="danger" style="display:none">Delete Part</button>
+      </div>
+
+      <div id="partMeta" class="muted small" style="display:none"></div>
+
+      <!-- Add Feature -->
+      <div id="featureForm" style="display:none; margin-top:8px;">
+        <div class="row">
+          <select id="ftype">
+            <option value="HOLE">HOLE</option>
+            <option value="SLOT">SLOT</option>
+          </select>
+          <input id="fx" type="number" step="any" placeholder="x" style="width:100px" />
+          <input id="fy" type="number" step="any" placeholder="y" style="width:100px" />
+          <input id="fd1" type="number" step="any" placeholder="d1" style="width:100px" />
+          <input id="fd2" type="number" step="any" placeholder="d2" style="width:100px" />
+          <button id="addFeature">Add Feature</button>
+        </div>
+      </div>
+
+      <table style="margin-top:8px;">
+        <thead><tr><th>ID</th><th>Type</th><th>x</th><th>y</th><th>d1</th><th>d2</th><th></th></tr></thead>
+        <tbody id="featuresBody"><tr><td colspan="7" class="muted">No part selected.</td></tr></tbody>
+      </table>
+
+      <div id="rulesRow" class="row" style="margin-top:10px; display:none;">
+        <button id="runRules" class="ghost">Run Rules</button>
+        <div id="rulesResult" class="muted small"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast"></div>
+
+<script>
+const toast = (msg, ms=1800) => {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.style.display='block';
+  setTimeout(()=> t.style.display='none', ms);
+};
+const api = async (path, opts={}) => {
+  const res = await fetch(path, { headers:{'Content-Type':'application/json'}, ...opts });
+  if (!res.ok && res.status !== 204) {
+    let err = '';
+    try { const j = await res.json(); err = j.error || JSON.stringify(j); } catch { err = await res.text(); }
+    throw new Error(`${res.status} ${res.statusText} - ${err}`);
+  }
+  if (res.status === 204) return null;
+  try { return await res.json(); } catch { return null; }
+};
+
+let selectedPart = null;
+
+async function loadParts() {
+  const body = document.getElementById('partsBody');
+  body.innerHTML = `<tr><td colspan="5" class="muted">Loading…</td></tr>`;
+  try {
+    const parts = await api('/parts');
+    if (!parts || parts.length === 0) {
+      body.innerHTML = `<tr><td colspan="5" class="muted">No parts yet.</td></tr>`;
+      clearDetail();
+      return;
+    }
+    body.innerHTML = '';
+    for (const p of parts) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td><a href="#" data-pn="${p.partNumber}">${p.partNumber}</a></td>
+        <td>${escapeHtml(p.name)}</td>
+        <td>${escapeHtml(p.unit)}</td>
+        <td>${p.featureCount ?? '-'}</td>
+        <td><button class="danger" data-del="${p.partNumber}">Delete</button></td>
+      `;
+      body.appendChild(tr);
+    }
+  } catch (e) {
+    body.innerHTML = `<tr><td colspan="5" class="muted">Error: ${escapeHtml(e.message)}</td></tr>`;
+  }
+}
+
+async function selectPart(partNumber) {
+  try {
+    const part = await api(`/parts/${encodeURIComponent(partNumber)}`);
+    selectedPart = part;
+    document.getElementById('detailTitle').textContent = `${part.partNumber} — ${part.name}`;
+    document.getElementById('partMeta').style.display = 'block';
+    document.getElementById('partMeta').textContent = `Unit: ${part.unit} • Features: ${part.features?.length ?? 0}`;
+    document.getElementById('deletePart').style.display = 'inline-block';
+    document.getElementById('featureForm').style.display = 'block';
+    document.getElementById('rulesRow').style.display = 'flex';
+    renderFeatures(part.features || []);
+  } catch (e) {
+    toast('Failed to load part: ' + e.message);
+  }
+}
+
+function clearDetail() {
+  selectedPart = null;
+  document.getElementById('detailTitle').textContent = 'Select a part';
+  document.getElementById('partMeta').style.display = 'none';
+  document.getElementById('deletePart').style.display = 'none';
+  document.getElementById('featureForm').style.display = 'none';
+  document.getElementById('rulesRow').style.display = 'none';
+  document.getElementById('featuresBody').innerHTML = `<tr><td colspan="7" class="muted">No part selected.</td></tr>`;
+}
+
+function renderFeatures(features) {
+  const body = document.getElementById('featuresBody');
+  if (!features.length) {
+    body.innerHTML = `<tr><td colspan="7" class="muted">No features yet.</td></tr>`;
+    return;
+  }
+  body.innerHTML = '';
+  for (const f of features) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${f.id}</td>
+      <td>${f.type}</td>
+      <td>${f.x}</td>
+      <td>${f.y}</td>
+      <td>${f.d1}</td>
+      <td>${f.d2}</td>
+      <td><button class="danger" data-del-feature="${f.id}">Delete</button></td>
+    `;
+    body.appendChild(tr);
+  }
+}
+
+document.getElementById('refreshParts').addEventListener('click', loadParts);
+
+document.getElementById('createPart').addEventListener('click', async () => {
+  const partNumber = document.getElementById('pn').value.trim();
+  const name = document.getElementById('pname').value.trim();
+  const unit = document.getElementById('punit').value.trim() || 'MM';
+  if (!partNumber || !name || !unit) return toast('Fill in partNumber, name, unit');
+  try {
+    await api('/parts', { method:'POST', body: JSON.stringify({ partNumber, name, unit }) });
+    toast('Part created');
+    document.getElementById('pn').value = '';
+    document.getElementById('pname').value = '';
+    loadParts();
+    selectPart(partNumber);
+  } catch (e) { toast('Create failed: ' + e.message); }
+});
+
+document.getElementById('partsBody').addEventListener('click', async (e) => {
+  const a = e.target.closest('a[data-pn]');
+  if (a) { e.preventDefault(); await selectPart(a.dataset.pn); return; }
+  const del = e.target.closest('button[data-del]');
+  if (del) {
+    const pn = del.dataset.del;
+    if (!confirm(`Delete part ${pn}? This removes all features.`)) return;
+    try { await api(`/parts/${encodeURIComponent(pn)}`, { method:'DELETE' }); toast('Part deleted'); loadParts(); clearDetail(); }
+    catch (e) { toast('Delete failed: ' + e.message); }
+  }
+});
+
+document.getElementById('deletePart').addEventListener('click', async () => {
+  if (!selectedPart) return;
+  const pn = selectedPart.partNumber;
+  if (!confirm(`Delete part ${pn}?`)) return;
+  try { await api(`/parts/${encodeURIComponent(pn)}`, { method:'DELETE' }); toast('Part deleted'); loadParts(); clearDetail(); }
+  catch (e) { toast('Delete failed: ' + e.message); }
+});
+
+document.getElementById('addFeature').addEventListener('click', async () => {
+  if (!selectedPart) return toast('Select a part first');
+  const pn = selectedPart.partNumber;
+  const type = document.getElementById('ftype').value;
+  const x = parseFloat(document.getElementById('fx').value);
+  const y = parseFloat(document.getElementById('fy').value);
+  const d1 = parseFloat(document.getElementById('fd1').value);
+  const d2 = parseFloat(document.getElementById('fd2').value || 0);
+  if ([x,y,d1].some(v => Number.isNaN(v))) return toast('x, y, d1 are required numbers');
+  try {
+    await api(`/parts/${encodeURIComponent(pn)}/features`, { method:'POST', body: JSON.stringify({ type, x, y, d1, d2 }) });
+    // reload the selected part to refresh features
+    const part = await api(`/parts/${encodeURIComponent(pn)}`);
+    selectedPart = part;
+    renderFeatures(part.features || []);
+    document.getElementById('fx').value = '';
+    document.getElementById('fy').value = '';
+    document.getElementById('fd1').value = '';
+    document.getElementById('fd2').value = '';
+    toast('Feature added');
+    loadParts(); // refresh counts
+  } catch (e) { toast('Add failed: ' + e.message); }
+});
+
+document.getElementById('featuresBody').addEventListener('click', async (e) => {
+  const btn = e.target.closest('button[data-del-feature]');
+  if (!btn || !selectedPart) return;
+  const id = btn.dataset.delFeature;
+  const pn = selectedPart.partNumber;
+  if (!confirm(`Delete feature ${id} from ${pn}?`)) return;
+  try {
+    await api(`/parts/${encodeURIComponent(pn)}/features/${encodeURIComponent(id)}`, { method:'DELETE' });
+    const part = await api(`/parts/${encodeURIComponent(pn)}`);
+    selectedPart = part;
+    renderFeatures(part.features || []);
+    toast('Feature deleted');
+    loadParts(); // refresh counts
+  } catch (e) { toast('Delete failed: ' + e.message); }
+});
+
+document.getElementById('runRules').addEventListener('click', async () => {
+  if (!selectedPart) return;
+  const pn = selectedPart.partNumber;
+  const res = await api(`/rules/run/${encodeURIComponent(pn)}`, { method:'POST' }).catch(e => ({ error:e.message }));
+  const el = document.getElementById('rulesResult');
+  if (res && !res.error) {
+    el.textContent = 'Rules run completed.';
+    toast('Rules executed');
+  } else {
+    el.textContent = 'Rules error: ' + (res?.error || 'unknown');
+  }
+});
+
+function escapeHtml(s){ return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+
+loadParts(); // boot
+</script>
+</body>
+</html>

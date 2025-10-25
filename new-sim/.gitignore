@@ -1,0 +1,15 @@
+# Maven / build
+target/
+*.log
+
+# IDEs
+.idea/
+.vscode/
+*.iml
+
+# OS junk
+.DS_Store
+
+# Local DB files
+*.db
+*.sqlite
